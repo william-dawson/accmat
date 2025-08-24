@@ -12,17 +12,16 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_BINARY_DIR}/mod)
 file(MAKE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY})
 include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 
-file(GLOB LIB_SOURCES "lib/*.f90")
-file(GLOB API_SOURCES "api/*.f90")
-set(ALL_SOURCES ${LIB_SOURCES} ${API_SOURCES})
+# Add subdirectories for lib and api
+add_subdirectory(lib)
+add_subdirectory(api)
 
-if(LIB_SOURCES OR API_SOURCES)
-    add_library(fbuf STATIC ${ALL_SOURCES})
-    set_target_properties(fbuf PROPERTIES
-        Fortran_MODULE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY}
-    )
-    target_include_directories(fbuf PUBLIC ${CMAKE_Fortran_MODULE_DIRECTORY})
-endif()
+# Create final library from object libraries
+add_library(fbuf STATIC $<TARGET_OBJECTS:fbuf_impl> $<TARGET_OBJECTS:fbuf_api>)
+set_target_properties(fbuf PROPERTIES
+    Fortran_MODULE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY}
+)
+target_include_directories(fbuf PUBLIC ${CMAKE_Fortran_MODULE_DIRECTORY})
 
 # Add examples subdirectory
 add_subdirectory(example)
