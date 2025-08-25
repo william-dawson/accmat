@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.12)
 project(fbuf LANGUAGES Fortran)
 
+# Enable testing
+enable_testing()
+
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -std=f2008 -Wall -Wextra -g -O2 -fopenacc")
 
 find_package(OpenACC QUIET)

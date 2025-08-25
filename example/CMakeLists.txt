@@ -19,3 +19,9 @@ target_include_directories(dict_demo PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
 add_executable(lin_solve lin_solve.f90)
 target_link_libraries(lin_solve fbuf)
 target_include_directories(lin_solve PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
+
+# Add tests for all examples
+add_test(NAME test_dot_product COMMAND dot_product)
+add_test(NAME test_vector_add COMMAND vector_add)
+add_test(NAME test_dict_demo COMMAND dict_demo)
+add_test(NAME test_lin_solve COMMAND lin_solve)
