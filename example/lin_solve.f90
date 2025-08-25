@@ -10,7 +10,7 @@ program lin_solve
     type(fbuf_type) :: matrix_buf, x_buf, b_buf, r_buf, p_buf
     type(dict_type) :: options
     real(real64), pointer :: matrix(:), x(:), b(:), r(:), p(:)
-    integer(int32) :: max_iter, iter, verbosity
+    integer(int32) :: max_iter, iter, verbosity, i
     real(real64) :: tolerance, alpha, rsold, rsnew, norm_r
     real(real64) :: residual_history(max_history)
     logical :: found, converged
@@ -40,13 +40,13 @@ program lin_solve
     write(*,*) 'algorithm = "' // trim(str_val) // '"'
     write(*,*) ''
     
-    ! Allocate memory using fbuf
-    write(*,*) 'Allocating memory...'
-    matrix_buf = create(real64_mold, n * n, FBUF_HOST)  ! Matrix as 1D array
-    x_buf = create(real64_mold, n, FBUF_HOST)          ! Solution vector
-    b_buf = create(real64_mold, n, FBUF_HOST)          ! Right-hand side
-    r_buf = create(real64_mold, n, FBUF_HOST)          ! Residual vector
-    p_buf = create(real64_mold, n, FBUF_HOST)          ! Work vector
+    ! Allocate memory using fbuf on device (OpenACC)
+    write(*,*) 'Allocating memory on device...'
+    matrix_buf = create(real64_mold, n * n, FBUF_OACC)  ! Matrix as 1D array
+    x_buf = create(real64_mold, n, FBUF_OACC)          ! Solution vector
+    b_buf = create(real64_mold, n, FBUF_OACC)          ! Right-hand side
+    r_buf = create(real64_mold, n, FBUF_OACC)          ! Residual vector
+    p_buf = create(real64_mold, n, FBUF_OACC)          ! Work vector
     
     ! Get pointers to data
     matrix => get_ptr(matrix_buf, real64_mold)
@@ -70,10 +70,16 @@ program lin_solve
     ! Initial residual: r = b - A*x
     call compute_residual(matrix_buf, x_buf, b_buf, r_buf, n)
     
-    ! Sync r_buf to HOST to access residual data
-    r_buf = sync(r_buf, FBUF_HOST)
+    ! Get device pointer for initial residual computation
     r => get_ptr(r_buf, real64_mold)
-    rsold = dot_product(r, r)
+    
+    ! Compute initial residual norm using OpenACC
+    rsold = 0.0_real64
+    !$acc parallel loop reduction(+:rsold) present(r)
+    do i = 1, n
+        rsold = rsold + r(i) * r(i)
+    end do
+    !$acc end parallel loop
     norm_r = sqrt(rsold)
     
     ! Store initial residual
@@ -93,27 +99,35 @@ program lin_solve
         ! Compute A*r (store in p)
         call matrix_vector_mult(matrix_buf, r_buf, p_buf, n)
         
-        ! Sync buffers to HOST for vector operations
-        r_buf = sync(r_buf, FBUF_HOST)
-        p_buf = sync(p_buf, FBUF_HOST)
-        x_buf = sync(x_buf, FBUF_HOST)
-        
-        ! Get fresh pointers after sync
+        ! Get fresh pointers for device computation
         r => get_ptr(r_buf, real64_mold)
         p => get_ptr(p_buf, real64_mold) 
         x => get_ptr(x_buf, real64_mold)
         
-        ! Step size: alpha = (r'*r) / (r'*A*r)
-        alpha = rsold / dot_product(r, p)
+        ! Step size: alpha = (r'*r) / (r'*A*r) using OpenACC reduction
+        alpha = 0.0_real64
+        !$acc parallel loop reduction(+:alpha) present(r, p)
+        do i = 1, n
+            alpha = alpha + r(i) * p(i)
+        end do
+        !$acc end parallel loop
+        alpha = rsold / alpha
         
-        ! Update solution: x = x + alpha * r
-        x = x + alpha * r
+        ! Update solution and residual using OpenACC
+        !$acc parallel loop present(x, r, p)
+        do i = 1, n
+            x(i) = x(i) + alpha * r(i)      ! Update solution: x = x + alpha * r
+            r(i) = r(i) - alpha * p(i)      ! Update residual: r = r - alpha * A*r
+        end do
+        !$acc end parallel loop
         
-        ! Update residual: r = r - alpha * A*r
-        r = r - alpha * p
-        
-        ! New residual norm
-        rsnew = dot_product(r, r)
+        ! New residual norm using OpenACC reduction
+        rsnew = 0.0_real64
+        !$acc parallel loop reduction(+:rsnew) present(r)
+        do i = 1, n
+            rsnew = rsnew + r(i) * r(i)
+        end do
+        !$acc end parallel loop
         norm_r = sqrt(rsnew)
         
         ! Store residual in history
@@ -136,7 +150,7 @@ program lin_solve
     write(*,*) ''
     
     ! Solution statistics
-    ! Sync x_buf to HOST to access final solution
+    ! Sync x_buf to HOST to access final solution for printing
     x_buf = sync(x_buf, FBUF_HOST)
     x => get_ptr(x_buf, real64_mold)
     
@@ -196,21 +210,26 @@ contains
             write(*,*) 'Setting up symmetric diagonally dominant matrix...'
         end if
         
-        ! Sync to HOST to access data
-        A_buf = sync(A_buf, FBUF_HOST)
-        x_buf = sync(x_buf, FBUF_HOST)  
-        b_buf = sync(b_buf, FBUF_HOST)
-        
-        ! Get pointers to synced data
+        ! Get device pointers directly (data already on device)
         A => get_ptr(A_buf, real64_mold)
         x => get_ptr(x_buf, real64_mold)
         b => get_ptr(b_buf, real64_mold)
         
-        ! Initialize
-        A = 0.0_real64
-        x = 0.0_real64  ! Initial guess
+        ! Initialize on device using OpenACC
+        !$acc parallel loop present(A, x)
+        do i = 1, n * n
+            A(i) = 0.0_real64
+        end do
+        !$acc end parallel loop
         
-        ! Create symmetric diagonally dominant matrix
+        !$acc parallel loop present(x)
+        do i = 1, n
+            x(i) = 0.0_real64  ! Initial guess
+        end do
+        !$acc end parallel loop
+        
+        ! Create symmetric diagonally dominant matrix using OpenACC
+        !$acc parallel loop collapse(2) present(A)
         do i = 1, n
             do j = 1, n
                 idx = (i-1) * n + j  ! Row-major indexing
@@ -224,16 +243,19 @@ contains
                 end if
             end do
         end do
+        !$acc end parallel loop
         
-        ! Right-hand side (simple pattern)
+        ! Right-hand side (simple pattern) using OpenACC
+        !$acc parallel loop present(b)
         do i = 1, n
             b(i) = sin(real(i, real64) * 3.14159_real64 / real(n, real64)) + 0.1_real64 * real(i, real64)
         end do
+        !$acc end parallel loop
         
         if (verb_level >= 2) then
-            write(*,*) 'Problem setup complete'
-            write(*,*) 'A(1,1) =', A(1), 'A(n,n) =', A(n*n)
-            write(*,*) 'b(1) =', b(1), 'b(n) =', b(n)
+            write(*,*) 'Problem setup complete on device'
+            ! Note: For diagnostic messages, would need to sync to host
+            ! Keeping device-based computation for performance
         end if
     end subroutine setup_problem
     
@@ -242,14 +264,9 @@ contains
         type(fbuf_type), intent(inout) :: A_buf, x_buf, b_buf, r_buf
         integer, intent(in) :: n
         real(real64), pointer :: A(:), x(:), b(:), r(:)
+        integer :: i
         
-        ! Sync all buffers to HOST for computation
-        A_buf = sync(A_buf, FBUF_HOST)
-        x_buf = sync(x_buf, FBUF_HOST)
-        b_buf = sync(b_buf, FBUF_HOST)
-        r_buf = sync(r_buf, FBUF_HOST)
-        
-        ! Get pointers to synced data
+        ! Get device pointers directly
         A => get_ptr(A_buf, real64_mold)
         x => get_ptr(x_buf, real64_mold)
         b => get_ptr(b_buf, real64_mold)
@@ -258,8 +275,12 @@ contains
         ! First compute A*x (store in r temporarily)
         call matrix_vector_mult(A_buf, x_buf, r_buf, n)
         
-        ! Then r = b - A*x
-        r = b - r
+        ! Then r = b - A*x using OpenACC
+        !$acc parallel loop present(r, b)
+        do i = 1, n
+            r(i) = b(i) - r(i)
+        end do
+        !$acc end parallel loop
     end subroutine compute_residual
     
     !> Matrix-vector multiplication: result = A * vec
@@ -269,23 +290,22 @@ contains
         integer :: i, j, idx
         real(real64), pointer :: A(:), vec(:), result(:)
         
-        ! Sync all buffers to HOST for computation
-        A_buf = sync(A_buf, FBUF_HOST)
-        vec_buf = sync(vec_buf, FBUF_HOST)
-        result_buf = sync(result_buf, FBUF_HOST)
-        
-        ! Get pointers to synced data
+        ! Get device pointers directly
         A => get_ptr(A_buf, real64_mold)
         vec => get_ptr(vec_buf, real64_mold)
         result => get_ptr(result_buf, real64_mold)
         
+        ! Matrix-vector multiplication using OpenACC
+        !$acc parallel loop present(result, A, vec)
         do i = 1, n
             result(i) = 0.0_real64
+            !$acc loop seq
             do j = 1, n
                 idx = (i-1) * n + j
                 result(i) = result(i) + A(idx) * vec(j)
             end do
         end do
+        !$acc end parallel loop
     end subroutine matrix_vector_mult
 
 end program lin_solve
