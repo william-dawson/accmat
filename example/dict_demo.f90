@@ -1,5 +1,5 @@
 program dict_demo
-    use dict
+    use dict, only: dict_type, create, destroy, has_key, dict_set, dict_get, print_json, to_json, from_json
     use molds
     use iso_fortran_env, only: real64, real32, int32, int64
     implicit none
@@ -34,8 +34,8 @@ program dict_demo
     
     write(*,*) 'has_key("name") =', has_key(my_dict, 'name')
     
-    json_str = to_json(my_dict)
-    write(*,*) 'JSON =', json_str
+    write(*,*) 'JSON:'
+    call print_json(my_dict)
     write(*,*) ''
     
     ! Arrays
@@ -54,8 +54,8 @@ program dict_demo
     str_val = dict_get(my_dict, 'int32_array', string_mold, found)
     write(*,*) 'int32_array =', trim(str_val)
     
-    json_str = to_json(my_dict)
-    write(*,*) 'arrays JSON =', json_str
+    write(*,*) 'Arrays JSON:'
+    call print_json(my_dict)
     write(*,*) ''
     
     ! Complex structures
@@ -91,8 +91,9 @@ program dict_demo
         call destroy(parsed_dict)
     end if
     
-    json_str = to_json(my_dict)
-    write(*,*) 'nested JSON =', json_str
+    write(*,*) 'Nested JSON:'
+    call print_json(my_dict)
+    json_str = to_json(my_dict)  ! Keep for parsing demo
     write(*,*) ''
     
     ! JSON parsing

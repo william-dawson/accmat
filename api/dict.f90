@@ -51,7 +51,7 @@ module dict
     implicit none
     
     public :: dict_type
-    public :: create, destroy, has_key, to_json, from_json
+    public :: create, destroy, has_key, to_json, from_json, print_json
     public :: dict_set, dict_get
     
     ! Generic interfaces for setting values
@@ -469,5 +469,100 @@ contains
         
         value = dict_get_dict(dict, key, found)
     end function get_dict_mold
+
+    !> Pretty-print dictionary as formatted JSON
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(in)
+    !>         Dictionary to print
+    !>
+    !> Example:
+    !> ```fortran
+    !> call print_json(my_dict)
+    !> ```
+    subroutine print_json(dict)
+        type(dict_type), intent(in) :: dict
+        character(len=:), allocatable :: json_str
+        
+        ! Get JSON string from dictionary
+        json_str = to_json(dict)
+        
+        ! Print with indentation for readability
+        call print_formatted_json(json_str)
+    end subroutine print_json
+
+    !> Print JSON string with proper formatting and indentation
+    subroutine print_formatted_json(json_str)
+        character(len=*), intent(in) :: json_str
+        integer :: i, indent_level, str_len
+        character(len=1) :: ch
+        logical :: in_string
+        
+        str_len = len_trim(json_str)
+        indent_level = 0
+        in_string = .false.
+        i = 1
+        
+        do while (i <= str_len)
+            ch = json_str(i:i)
+            
+            select case (ch)
+            case ('"')
+                if (i == 1 .or. json_str(i-1:i-1) /= '\') then
+                    in_string = .not. in_string
+                end if
+                write(*,'(a)',advance='no') ch
+            case ('{', '[')
+                if (.not. in_string) then
+                    write(*,'(a)') ch
+                    indent_level = indent_level + 1
+                    call print_indent(indent_level)
+                else
+                    write(*,'(a)',advance='no') ch
+                end if
+            case ('}', ']')
+                if (.not. in_string) then
+                    write(*,*)
+                    indent_level = indent_level - 1
+                    call print_indent(indent_level)
+                    write(*,'(a)') ch
+                else
+                    write(*,'(a)',advance='no') ch
+                end if
+            case (',')
+                if (.not. in_string) then
+                    write(*,'(a)') ch
+                    call print_indent(indent_level)
+                else
+                    write(*,'(a)',advance='no') ch
+                end if
+            case (':')
+                if (.not. in_string) then
+                    write(*,'(a)',advance='no') ': '
+                else
+                    write(*,'(a)',advance='no') ch
+                end if
+            case (' ')
+                if (in_string) then
+                    write(*,'(a)',advance='no') ch
+                end if
+                ! Skip spaces outside strings for cleaner formatting
+            case default
+                write(*,'(a)',advance='no') ch
+            end select
+            
+            i = i + 1
+        end do
+        write(*,*)
+    end subroutine print_formatted_json
+
+    !> Print indentation spaces
+    subroutine print_indent(level)
+        integer, intent(in) :: level
+        integer :: i
+        do i = 1, level * 2  ! 2 spaces per indent level
+            write(*,'(a)',advance='no') ' '
+        end do
+    end subroutine print_indent
 
 end module dict

@@ -1,6 +1,6 @@
 program lin_solve
     use fbuf
-    use dict, only: dict_type, dict_set, dict_get, dict_create => create, dict_destroy => destroy
+    use dict, only: dict_type, dict_set, dict_get, dict_create => create, dict_destroy => destroy, print_json
     use molds
     use iso_fortran_env, only: real64, int32
     implicit none
@@ -13,8 +13,7 @@ program lin_solve
     integer(int32) :: max_iter, iter, verbosity
     real(real64) :: tolerance, norm_r
     real(real64) :: residual_history(max_history)
-    logical :: found, converged
-    character(len=1024) :: str_val
+    logical :: converged
     
     write(*,*) 'Linear System Solver'
     write(*,*) ''
@@ -33,11 +32,7 @@ program lin_solve
     call dict_set(options, 'algorithm', 'steepest_descent')
     
     write(*,*) 'Configuration:'
-    write(*,*) 'problem_size =', dict_get(options, 'problem_size', int32_mold, found)
-    write(*,*) 'max_iterations =', dict_get(options, 'max_iterations', int32_mold, found)
-    write(*,*) 'tolerance =', dict_get(options, 'tolerance', real64_mold, found)
-    str_val = dict_get(options, 'algorithm', string_mold, found)
-    write(*,*) 'algorithm = "' // trim(str_val) // '"'
+    call print_json(options)
     write(*,*) ''
     
     ! Allocate memory using fbuf on device (OpenACC)
@@ -86,13 +81,8 @@ program lin_solve
     ! Store residual history using new array utilities
     call dict_set(options, 'residual_history', residual_history(1:iter+1))
     
-    write(*,*) 'Final results stored in dictionary:'
-    str_val = dict_get(options, 'converged', string_mold, found)
-    write(*,*) 'converged = "' // trim(str_val) // '"'
-    write(*,*) 'final_iterations =', dict_get(options, 'final_iterations', int32_mold, found)
-    write(*,*) 'final_residual =', dict_get(options, 'final_residual', real64_mold, found)
-    str_val = dict_get(options, 'residual_history', string_mold, found)
-    write(*,*) 'residual_history =', trim(str_val)
+    write(*,*) 'Final results:'
+    call print_json(options)
     write(*,*) ''
     
     ! Clean up
