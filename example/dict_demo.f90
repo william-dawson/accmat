@@ -1,15 +1,20 @@
 program dict_demo
     use dict
     use molds
-    use iso_fortran_env, only: real64, int32
+    use iso_fortran_env, only: real64, real32, int32, int64
     implicit none
     
     type(dict_type) :: my_dict, nested_dict, parsed_dict
     character(len=:), allocatable :: json_str
     character(len=1024) :: str_val
     integer(int32) :: int_val
-    real(real64) :: real_val
     logical :: found
+    
+    ! Test arrays for demo
+    real(real64) :: real64_data(3) = [1.1_real64, 2.2_real64, 3.3_real64]
+    real(real32) :: real32_data(2) = [1.5_real32, 2.5_real32]
+    integer(int32) :: int32_data(4) = [10_int32, 20_int32, 30_int32, 40_int32]
+    integer(int64) :: int64_data(2) = [100000_int64, 200000_int64]
     
     write(*,*) 'Dictionary Demo'
     write(*,*) ''
@@ -34,19 +39,23 @@ program dict_demo
     write(*,*) ''
     
     ! Arrays
-    write(*,*) '2. Arrays (stored as JSON strings)'
+    write(*,*) '2. Typed arrays (automatic JSON conversion)'
     call destroy(my_dict)
     my_dict = create()
     
-    call dict_set(my_dict, 'names', '["Alice", "Bob", "Charlie"]')
-    call dict_set(my_dict, 'matrix', '[[1, 2], [3, 4]]')
-    call dict_set(my_dict, 'mixed', '["text", 42, true]')
+    call dict_set(my_dict, 'real64_array', real64_data)
+    call dict_set(my_dict, 'real32_array', real32_data)  
+    call dict_set(my_dict, 'int32_array', int32_data)
+    call dict_set(my_dict, 'int64_array', int64_data)
     
-    str_val = dict_get(my_dict, 'names', string_mold, found)
-    write(*,*) 'names =', trim(str_val)
+    str_val = dict_get(my_dict, 'real64_array', string_mold, found)
+    write(*,*) 'real64_array =', trim(str_val)
     
-    str_val = dict_get(my_dict, 'matrix', string_mold, found)
-    write(*,*) 'matrix =', trim(str_val)
+    str_val = dict_get(my_dict, 'int32_array', string_mold, found)
+    write(*,*) 'int32_array =', trim(str_val)
+    
+    json_str = to_json(my_dict)
+    write(*,*) 'arrays JSON =', json_str
     write(*,*) ''
     
     ! Complex structures

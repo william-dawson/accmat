@@ -14,3 +14,8 @@ target_include_directories(vector_add PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
 add_executable(dict_demo dict_demo.f90)
 target_link_libraries(dict_demo fbuf)
 target_include_directories(dict_demo PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})
+
+# Create linear solver example
+add_executable(lin_solve lin_solve.f90)
+target_link_libraries(lin_solve fbuf)
+target_include_directories(lin_solve PRIVATE ${CMAKE_Fortran_MODULE_DIRECTORY})

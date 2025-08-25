@@ -7,6 +7,7 @@ module dict_mod
     public :: dict_type
     public :: dict_create, dict_destroy, dict_has_key, dict_to_json
     public :: dict_set_string, dict_set_int32, dict_set_real64, dict_set_dict
+    public :: dict_set_real64_array, dict_set_real32_array, dict_set_int32_array, dict_set_int64_array
     public :: dict_get_string, dict_get_int32, dict_get_real64, dict_get_dict
     public :: dict_from_json
     
@@ -141,6 +142,52 @@ contains
         json_str = dict_to_json(value)
         call dict_set_string(dict, key, json_str)
     end subroutine dict_set_dict
+    
+    !> Set real64 array as JSON string
+    subroutine dict_set_real64_array(dict, key, array)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        real(real64), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        
+        json_str = array_to_json_real64(array)
+        call dict_set_string(dict, key, json_str)
+    end subroutine dict_set_real64_array
+    
+    !> Set real32 array as JSON string  
+    subroutine dict_set_real32_array(dict, key, array)
+        use iso_fortran_env, only: real32
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        real(real32), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        
+        json_str = array_to_json_real32(array)
+        call dict_set_string(dict, key, json_str)
+    end subroutine dict_set_real32_array
+    
+    !> Set int32 array as JSON string
+    subroutine dict_set_int32_array(dict, key, array)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        integer(int32), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        
+        json_str = array_to_json_int32(array)
+        call dict_set_string(dict, key, json_str)
+    end subroutine dict_set_int32_array
+    
+    !> Set int64 array as JSON string
+    subroutine dict_set_int64_array(dict, key, array)
+        use iso_fortran_env, only: int64
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        integer(int64), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        
+        json_str = array_to_json_int64(array)
+        call dict_set_string(dict, key, json_str)
+    end subroutine dict_set_int64_array
     
     !> Get string value
     function dict_get_string(dict, key, found) result(value)
@@ -479,5 +526,75 @@ contains
             value = json_str(start_pos:pos-1)
         end if
     end function parse_literal_value
+    
+    !> Convert real64 array to JSON string
+    function array_to_json_real64(array) result(json_str)
+        real(real64), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        character(len=32) :: val_str
+        integer :: i, n
+        
+        n = size(array)
+        json_str = '['
+        do i = 1, n
+            write(val_str, '(ES15.8E2)') array(i)
+            if (i > 1) json_str = json_str // ','
+            json_str = json_str // trim(adjustl(val_str))
+        end do
+        json_str = json_str // ']'
+    end function array_to_json_real64
+    
+    !> Convert real32 array to JSON string  
+    function array_to_json_real32(array) result(json_str)
+        use iso_fortran_env, only: real32
+        real(real32), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        character(len=32) :: val_str
+        integer :: i, n
+        
+        n = size(array)
+        json_str = '['
+        do i = 1, n
+            write(val_str, '(ES15.8E2)') array(i)
+            if (i > 1) json_str = json_str // ','
+            json_str = json_str // trim(adjustl(val_str))
+        end do
+        json_str = json_str // ']'
+    end function array_to_json_real32
+    
+    !> Convert int32 array to JSON string
+    function array_to_json_int32(array) result(json_str)
+        integer(int32), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        character(len=16) :: val_str
+        integer :: i, n
+        
+        n = size(array)
+        json_str = '['
+        do i = 1, n
+            write(val_str, '(I0)') array(i)
+            if (i > 1) json_str = json_str // ','
+            json_str = json_str // trim(adjustl(val_str))
+        end do
+        json_str = json_str // ']'
+    end function array_to_json_int32
+    
+    !> Convert int64 array to JSON string
+    function array_to_json_int64(array) result(json_str)
+        use iso_fortran_env, only: int64
+        integer(int64), intent(in) :: array(:)
+        character(len=:), allocatable :: json_str
+        character(len=24) :: val_str
+        integer :: i, n
+        
+        n = size(array)
+        json_str = '['
+        do i = 1, n
+            write(val_str, '(I0)') array(i)
+            if (i > 1) json_str = json_str // ','
+            json_str = json_str // trim(adjustl(val_str))
+        end do
+        json_str = json_str // ']'
+    end function array_to_json_int64
 
 end module dict_mod

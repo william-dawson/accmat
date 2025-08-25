@@ -43,6 +43,7 @@
 module dict
     use dict_mod, only: dict_type, dict_create, dict_destroy, dict_has_key, dict_to_json, &
                         dict_set_int32, dict_set_real64, dict_set_string, dict_set_dict, &
+                        dict_set_real64_array, dict_set_real32_array, dict_set_int32_array, dict_set_int64_array, &
                         dict_get_int32, dict_get_real64, dict_get_string, dict_get_dict, &
                         dict_from_json
     use molds, only: int32_mold, real64_mold, string_mold, dict_mold
@@ -56,6 +57,7 @@ module dict
     ! Generic interfaces for setting values
     interface dict_set
         module procedure :: set_int32, set_real64, set_string, set_dict
+        module procedure :: set_real64_array, set_real32_array, set_int32_array, set_int64_array
     end interface
     
     ! Generic interfaces for getting values using mold pattern
@@ -233,6 +235,71 @@ contains
         type(dict_type), intent(in) :: value
         call dict_set_dict(dict, key, value)
     end subroutine set_dict
+    
+    !> Set real64 array value in dictionary
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(inout)
+    !>         Dictionary to modify
+    !>     key : character(len=*), intent(in)
+    !>         Key for the value
+    !>     value : real(real64), intent(in)
+    !>         64-bit real array to store as JSON
+    subroutine set_real64_array(dict, key, value)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        real(real64), intent(in) :: value(:)
+        call dict_set_real64_array(dict, key, value)
+    end subroutine set_real64_array
+    
+    !> Set real32 array value in dictionary  
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(inout)
+    !>         Dictionary to modify
+    !>     key : character(len=*), intent(in)
+    !>         Key for the value
+    !>     value : real(real32), intent(in)
+    !>         32-bit real array to store as JSON
+    subroutine set_real32_array(dict, key, value)
+        use iso_fortran_env, only: real32
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        real(real32), intent(in) :: value(:)
+        call dict_set_real32_array(dict, key, value)
+    end subroutine set_real32_array
+    
+    !> Set int32 array value in dictionary
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(inout)
+    !>         Dictionary to modify
+    !>     key : character(len=*), intent(in)
+    !>         Key for the value
+    !>     value : integer(int32), intent(in)
+    !>         32-bit integer array to store as JSON
+    subroutine set_int32_array(dict, key, value)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        integer(int32), intent(in) :: value(:)
+        call dict_set_int32_array(dict, key, value)
+    end subroutine set_int32_array
+    
+    !> Set int64 array value in dictionary
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(inout)
+    !>         Dictionary to modify
+    !>     key : character(len=*), intent(in)
+    !>         Key for the value
+    !>     value : integer(int64), intent(in)
+    !>         64-bit integer array to store as JSON
+    subroutine set_int64_array(dict, key, value)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key
+        integer(int64), intent(in) :: value(:)
+        call dict_set_int64_array(dict, key, value)
+    end subroutine set_int64_array
     
     !> Get integer value
     function get_int32(dict, key, found) result(value)
