@@ -1,55 +1,28 @@
 module dict_mod
-    use iso_fortran_env, only: real32, real64, int32, int64
+    use iso_fortran_env, only: real64, int32
     use iso_c_binding, only: c_null_char
     implicit none
     
     private
-    public :: dict_type, dict_value_type
+    public :: dict_type
     public :: dict_create, dict_destroy, dict_has_key, dict_to_json
-    public :: dict_set_int32, dict_set_real64, dict_set_string, dict_set_real64_array
-    public :: dict_get_int32, dict_get_real64, dict_get_string
-    public :: DICT_INT32, DICT_INT64, DICT_REAL32, DICT_REAL64, DICT_STRING, DICT_ARRAY_INT32, DICT_ARRAY_REAL64
+    public :: dict_set_string, dict_set_int32, dict_set_real64, dict_set_dict
+    public :: dict_get_string, dict_get_int32, dict_get_real64, dict_get_dict
+    public :: dict_from_json
     
-    ! Data type constants
-    integer, parameter :: DICT_INVALID = 0
-    integer, parameter :: DICT_INT32 = 1
-    integer, parameter :: DICT_INT64 = 2
-    integer, parameter :: DICT_REAL32 = 3
-    integer, parameter :: DICT_REAL64 = 4
-    integer, parameter :: DICT_STRING = 5
-    integer, parameter :: DICT_ARRAY_INT32 = 6
-    integer, parameter :: DICT_ARRAY_REAL64 = 7
+    ! Maximum sizes - reduced to avoid stack overflow
+    integer, parameter :: MAX_KEY_LEN = 64
+    integer, parameter :: MAX_VALUE_LEN = 1024
+    integer, parameter :: MAX_DICT_SIZE = 100
     
-    ! Maximum string length and key length
-    integer, parameter :: MAX_STRING_LEN = 1024
-    integer, parameter :: MAX_KEY_LEN = 256
-    integer, parameter :: MAX_DICT_SIZE = 1000
-    
-    ! Value type for storing different data types
-    type :: dict_value_type
-        integer :: value_type = DICT_INVALID
-        
-        ! Scalar values
-        integer(int32) :: int32_val
-        integer(int64) :: int64_val
-        real(real32) :: real32_val
-        real(real64) :: real64_val
-        character(len=MAX_STRING_LEN) :: string_val
-        
-        ! Array values (simplified - fixed size for now)
-        integer :: array_size = 0
-        integer(int32), allocatable :: int32_array(:)
-        real(real64), allocatable :: real64_array(:)
-    end type dict_value_type
-    
-    ! Key-value pair
+    ! Simple key-value pair - everything is a string
     type :: dict_entry_type
         character(len=MAX_KEY_LEN) :: key = ''
-        type(dict_value_type) :: value
+        character(len=MAX_VALUE_LEN) :: value = ''
         logical :: is_used = .false.
     end type dict_entry_type
     
-    ! Dictionary type
+    ! Simple dictionary type - just key-value string pairs
     type :: dict_type
         type(dict_entry_type) :: entries(MAX_DICT_SIZE)
         integer :: size = 0
@@ -64,26 +37,28 @@ contains
         ! entries are automatically initialized
     end function dict_create
     
-    !> Destroy dictionary and cleanup memory
+    !> Destroy dictionary (just reset)
     subroutine dict_destroy(dict)
         type(dict_type), intent(inout) :: dict
         integer :: i
         
         do i = 1, MAX_DICT_SIZE
             if (dict%entries(i)%is_used) then
-                ! Cleanup allocated arrays
-                if (allocated(dict%entries(i)%value%int32_array)) then
-                    deallocate(dict%entries(i)%value%int32_array)
-                end if
-                if (allocated(dict%entries(i)%value%real64_array)) then
-                    deallocate(dict%entries(i)%value%real64_array)
-                end if
+                dict%entries(i)%key = ''
+                dict%entries(i)%value = ''
                 dict%entries(i)%is_used = .false.
             end if
         end do
-        
         dict%size = 0
     end subroutine dict_destroy
+    
+    !> Check if dictionary contains a key
+    function dict_has_key(dict, key) result(found)
+        type(dict_type), intent(in) :: dict
+        character(len=*), intent(in) :: key
+        logical :: found
+        found = find_key_index(dict, key) > 0
+    end function dict_has_key
     
     !> Find entry index for a key (returns 0 if not found)
     function find_key_index(dict, key) result(index)
@@ -101,7 +76,7 @@ contains
         end do
     end function find_key_index
     
-    !> Find next available entry index
+    !> Find free entry index (returns 0 if full)
     function find_free_index(dict) result(index)
         type(dict_type), intent(in) :: dict
         integer :: index
@@ -116,164 +91,138 @@ contains
         end do
     end function find_free_index
     
-    !> Check if dictionary has a key
-    function dict_has_key(dict, key) result(has_key)
-        type(dict_type), intent(in) :: dict
-        character(len=*), intent(in) :: key
-        logical :: has_key
+    !> Set string value
+    subroutine dict_set_string(dict, key, value)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: key, value
+        integer :: index
         
-        has_key = find_key_index(dict, key) > 0
-    end function dict_has_key
+        index = find_key_index(dict, key)
+        if (index == 0) then
+            index = find_free_index(dict)
+            if (index == 0) return  ! Dictionary full
+            dict%size = dict%size + 1
+            dict%entries(index)%key = trim(key)
+            dict%entries(index)%is_used = .true.
+        end if
+        
+        dict%entries(index)%value = trim(value)
+    end subroutine dict_set_string
     
-    !> Set integer value in dictionary
+    !> Set int32 value (convert to string)
     subroutine dict_set_int32(dict, key, value)
         type(dict_type), intent(inout) :: dict
         character(len=*), intent(in) :: key
         integer(int32), intent(in) :: value
-        integer :: index
+        character(len=32) :: value_str
         
-        index = find_key_index(dict, key)
-        if (index == 0) then
-            index = find_free_index(dict)
-            if (index == 0) return  ! Dictionary full
-            dict%size = dict%size + 1
-            dict%entries(index)%key = trim(key)
-            dict%entries(index)%is_used = .true.
-        end if
-        
-        dict%entries(index)%value%value_type = DICT_INT32
-        dict%entries(index)%value%int32_val = value
+        write(value_str, '(I0)') value
+        call dict_set_string(dict, key, trim(value_str))
     end subroutine dict_set_int32
     
-    !> Set real64 value in dictionary
+    !> Set real64 value (convert to string)
     subroutine dict_set_real64(dict, key, value)
         type(dict_type), intent(inout) :: dict
         character(len=*), intent(in) :: key
         real(real64), intent(in) :: value
-        integer :: index
+        character(len=32) :: value_str
         
-        index = find_key_index(dict, key)
-        if (index == 0) then
-            index = find_free_index(dict)
-            if (index == 0) return  ! Dictionary full
-            dict%size = dict%size + 1
-            dict%entries(index)%key = trim(key)
-            dict%entries(index)%is_used = .true.
-        end if
-        
-        dict%entries(index)%value%value_type = DICT_REAL64
-        dict%entries(index)%value%real64_val = value
+        write(value_str, '(F0.6)') value
+        call dict_set_string(dict, key, trim(value_str))
     end subroutine dict_set_real64
     
-    !> Set string value in dictionary
-    subroutine dict_set_string(dict, key, value)
+    !> Set dict value (convert to JSON string)
+    subroutine dict_set_dict(dict, key, value)
         type(dict_type), intent(inout) :: dict
         character(len=*), intent(in) :: key
-        character(len=*), intent(in) :: value
-        integer :: index
+        type(dict_type), intent(in) :: value
+        character(len=:), allocatable :: json_str
         
-        index = find_key_index(dict, key)
-        if (index == 0) then
-            index = find_free_index(dict)
-            if (index == 0) return  ! Dictionary full
-            dict%size = dict%size + 1
-            dict%entries(index)%key = trim(key)
-            dict%entries(index)%is_used = .true.
-        end if
-        
-        dict%entries(index)%value%value_type = DICT_STRING
-        dict%entries(index)%value%string_val = trim(value)
-    end subroutine dict_set_string
+        json_str = dict_to_json(value)
+        call dict_set_string(dict, key, json_str)
+    end subroutine dict_set_dict
     
-    !> Set real64 array value in dictionary
-    subroutine dict_set_real64_array(dict, key, value)
-        type(dict_type), intent(inout) :: dict
+    !> Get string value
+    function dict_get_string(dict, key, found) result(value)
+        type(dict_type), intent(in) :: dict
         character(len=*), intent(in) :: key
-        real(real64), intent(in) :: value(:)
+        logical, intent(out), optional :: found
+        character(len=MAX_VALUE_LEN) :: value
         integer :: index
         
+        value = ''
+        if (present(found)) found = .false.
+        
         index = find_key_index(dict, key)
-        if (index == 0) then
-            index = find_free_index(dict)
-            if (index == 0) return  ! Dictionary full
-            dict%size = dict%size + 1
-            dict%entries(index)%key = trim(key)
-            dict%entries(index)%is_used = .true.
+        if (index > 0) then
+            value = dict%entries(index)%value
+            if (present(found)) found = .true.
         end if
-        
-        ! Cleanup existing array if present
-        if (allocated(dict%entries(index)%value%real64_array)) then
-            deallocate(dict%entries(index)%value%real64_array)
-        end if
-        
-        dict%entries(index)%value%value_type = DICT_ARRAY_REAL64
-        dict%entries(index)%value%array_size = size(value)
-        allocate(dict%entries(index)%value%real64_array(size(value)))
-        dict%entries(index)%value%real64_array = value
-    end subroutine dict_set_real64_array
+    end function dict_get_string
     
-    !> Get integer value from dictionary
+    !> Get int32 value (parse from string)
     function dict_get_int32(dict, key, found) result(value)
         type(dict_type), intent(in) :: dict
         character(len=*), intent(in) :: key
         logical, intent(out), optional :: found
         integer(int32) :: value
-        integer :: index
+        character(len=MAX_VALUE_LEN) :: str_value
+        integer :: iostat
         
         value = 0
-        index = find_key_index(dict, key)
+        str_value = dict_get_string(dict, key, found)
         
-        if (present(found)) found = .false.
-        
-        if (index > 0 .and. dict%entries(index)%value%value_type == DICT_INT32) then
-            value = dict%entries(index)%value%int32_val
-            if (present(found)) found = .true.
+        if (present(found) .and. found) then
+            read(str_value, '(I10)', iostat=iostat) value
+            if (iostat /= 0) then
+                value = 0
+                if (present(found)) found = .false.
+            end if
         end if
     end function dict_get_int32
     
-    !> Get real64 value from dictionary
+    !> Get real64 value (parse from string)
     function dict_get_real64(dict, key, found) result(value)
         type(dict_type), intent(in) :: dict
         character(len=*), intent(in) :: key
         logical, intent(out), optional :: found
         real(real64) :: value
-        integer :: index
+        character(len=MAX_VALUE_LEN) :: str_value
+        integer :: iostat
         
         value = 0.0_real64
-        index = find_key_index(dict, key)
+        str_value = dict_get_string(dict, key, found)
         
-        if (present(found)) found = .false.
-        
-        if (index > 0 .and. dict%entries(index)%value%value_type == DICT_REAL64) then
-            value = dict%entries(index)%value%real64_val
-            if (present(found)) found = .true.
+        if (present(found) .and. found) then
+            read(str_value, '(F20.10)', iostat=iostat) value
+            if (iostat /= 0) then
+                value = 0.0_real64
+                if (present(found)) found = .false.
+            end if
         end if
     end function dict_get_real64
     
-    !> Get string value from dictionary
-    function dict_get_string(dict, key, found) result(value)
+    !> Get dict value (parse JSON string into new dictionary)
+    function dict_get_dict(dict, key, found) result(value)
         type(dict_type), intent(in) :: dict
         character(len=*), intent(in) :: key
         logical, intent(out), optional :: found
-        character(len=MAX_STRING_LEN) :: value
-        integer :: index
+        type(dict_type) :: value
+        character(len=MAX_VALUE_LEN) :: json_str
         
-        value = ''
-        index = find_key_index(dict, key)
+        value = dict_create()
+        json_str = dict_get_string(dict, key, found)
         
-        if (present(found)) found = .false.
-        
-        if (index > 0 .and. dict%entries(index)%value%value_type == DICT_STRING) then
-            value = dict%entries(index)%value%string_val
-            if (present(found)) found = .true.
+        if (present(found) .and. found) then
+            value = dict_from_json(json_str)
         end if
-    end function dict_get_string
+    end function dict_get_dict
     
-    !> Convert dictionary to JSON format
+    !> Convert dictionary to JSON string
     function dict_to_json(dict) result(json_str)
         type(dict_type), intent(in) :: dict
         character(len=:), allocatable :: json_str
-        character(len=10000) :: temp_str
+        character(len=MAX_VALUE_LEN) :: temp_str
         integer :: i, pos
         logical :: first_entry
         
@@ -298,19 +247,20 @@ contains
                 temp_str(pos:pos+1) = '":'
                 pos = pos + 2
                 
-                ! Add value based on type
-                select case(dict%entries(i)%value%value_type)
-                case(DICT_INT32)
-                    call add_int_to_json(temp_str, pos, dict%entries(i)%value%int32_val)
-                case(DICT_REAL64)
-                    call add_real_to_json(temp_str, pos, dict%entries(i)%value%real64_val)
-                case(DICT_STRING)
-                    call add_string_to_json(temp_str, pos, dict%entries(i)%value%string_val)
-                case(DICT_ARRAY_REAL64)
-                    call add_real_array_to_json(temp_str, pos, &
-                        dict%entries(i)%value%real64_array, &
-                        dict%entries(i)%value%array_size)
-                end select
+                ! Add value - check if it's already JSON (starts with { or [)
+                if (dict%entries(i)%value(1:1) == '{' .or. dict%entries(i)%value(1:1) == '[') then
+                    ! Raw JSON - don't quote
+                    temp_str(pos:pos+len_trim(dict%entries(i)%value)-1) = trim(dict%entries(i)%value)
+                    pos = pos + len_trim(dict%entries(i)%value)
+                else
+                    ! Regular string value - quote it
+                    temp_str(pos:pos) = '"'
+                    pos = pos + 1
+                    temp_str(pos:pos+len_trim(dict%entries(i)%value)-1) = trim(dict%entries(i)%value)
+                    pos = pos + len_trim(dict%entries(i)%value)
+                    temp_str(pos:pos) = '"'
+                    pos = pos + 1
+                end if
             end if
         end do
         
@@ -320,69 +270,214 @@ contains
         json_str = temp_str(1:pos-1)
     end function dict_to_json
     
-    !> Helper: Add integer to JSON string
-    subroutine add_int_to_json(str, pos, val)
-        character(len=*), intent(inout) :: str
-        integer, intent(inout) :: pos
-        integer(int32), intent(in) :: val
-        character(len=20) :: int_str
+    !> Parse JSON string into dictionary (one level deep)
+    !> 
+    !> This function converts a JSON string into a dictionary where all values
+    !> are stored as strings. Nested objects are stored as JSON strings and can
+    !> be parsed separately by calling this function recursively.
+    function dict_from_json(json_str) result(dict)
+        character(len=*), intent(in) :: json_str
+        type(dict_type) :: dict
+        integer :: pos, len_str
         
-        write(int_str, '(i0)') val
-        str(pos:pos+len_trim(int_str)-1) = trim(int_str)
-        pos = pos + len_trim(int_str)
-    end subroutine add_int_to_json
-    
-    !> Helper: Add real to JSON string
-    subroutine add_real_to_json(str, pos, val)
-        character(len=*), intent(inout) :: str
-        integer, intent(inout) :: pos
-        real(real64), intent(in) :: val
-        character(len=30) :: real_str
+        dict = dict_create()
+        len_str = len_trim(json_str)
         
-        write(real_str, '(g0)') val
-        str(pos:pos+len_trim(real_str)-1) = trim(real_str)
-        pos = pos + len_trim(real_str)
-    end subroutine add_real_to_json
-    
-    !> Helper: Add string to JSON string
-    subroutine add_string_to_json(str, pos, val)
-        character(len=*), intent(inout) :: str
-        integer, intent(inout) :: pos
-        character(len=*), intent(in) :: val
+        ! Must start with opening brace
+        if (len_str == 0 .or. json_str(1:1) /= '{') return
         
-        str(pos:pos) = '"'
-        pos = pos + 1
-        str(pos:pos+len_trim(val)-1) = trim(val)
-        pos = pos + len_trim(val)
-        str(pos:pos) = '"'
-        pos = pos + 1
-    end subroutine add_string_to_json
-    
-    !> Helper: Add real array to JSON string
-    subroutine add_real_array_to_json(str, pos, arr, arr_size)
-        character(len=*), intent(inout) :: str
-        integer, intent(inout) :: pos
-        real(real64), intent(in) :: arr(:)
-        integer, intent(in) :: arr_size
-        integer :: i
-        character(len=30) :: real_str
+        pos = 2  ! Skip opening brace
         
-        str(pos:pos) = '['
-        pos = pos + 1
-        
-        do i = 1, arr_size
-            if (i > 1) then
-                str(pos:pos) = ','
+        ! Parse key-value pairs
+        do while (pos < len_str)
+            call skip_whitespace(json_str, pos, len_str)
+            
+            ! Check for end of object or comma separator
+            if (pos > len_str .or. json_str(pos:pos) == '}') exit
+            if (json_str(pos:pos) == ',') then
                 pos = pos + 1
+                cycle
             end if
             
-            write(real_str, '(g0)') arr(i)
-            str(pos:pos+len_trim(real_str)-1) = trim(real_str)
-            pos = pos + len_trim(real_str)
+            ! Parse one key-value pair
+            call parse_key_value_pair(dict, json_str, pos, len_str)
+        end do
+    end function dict_from_json
+    
+    !> Skip whitespace characters
+    subroutine skip_whitespace(json_str, pos, len_str)
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        
+        do while (pos <= len_str)
+            if (json_str(pos:pos) == ' ' .or. json_str(pos:pos) == char(9) .or. &
+                json_str(pos:pos) == char(10) .or. json_str(pos:pos) == char(13)) then
+                pos = pos + 1
+            else
+                exit
+            end if
+        end do
+    end subroutine skip_whitespace
+    
+    !> Parse a single key-value pair from JSON
+    subroutine parse_key_value_pair(dict, json_str, pos, len_str)
+        type(dict_type), intent(inout) :: dict
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        character(len=MAX_KEY_LEN) :: key
+        character(len=MAX_VALUE_LEN) :: value
+        
+        ! Parse key
+        key = parse_key_string(json_str, pos, len_str)
+        if (len_trim(key) == 0) return
+        
+        ! Skip whitespace and colon
+        call skip_whitespace(json_str, pos, len_str)
+        if (pos <= len_str .and. json_str(pos:pos) == ':') then
+            pos = pos + 1
+            call skip_whitespace(json_str, pos, len_str)
+        end if
+        
+        ! Parse value
+        if (pos <= len_str) then
+            if (json_str(pos:pos) == '"') then
+                ! String value
+                value = parse_string_value(json_str, pos, len_str)
+            else if (json_str(pos:pos) == '{') then
+                ! Nested object - extract entire object as string
+                value = parse_object_value(json_str, pos, len_str)
+            else
+                ! Number or literal value
+                value = parse_literal_value(json_str, pos, len_str)
+            end if
+            
+            call dict_set_string(dict, trim(key), trim(value))
+        end if
+    end subroutine parse_key_value_pair
+    
+    !> Parse a quoted key string (limited to MAX_KEY_LEN)
+    function parse_key_string(json_str, pos, len_str) result(key)
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        character(len=MAX_KEY_LEN) :: key
+        integer :: start_pos
+        
+        key = ''
+        
+        ! Must start with quote
+        if (pos > len_str .or. json_str(pos:pos) /= '"') return
+        
+        pos = pos + 1  ! Skip opening quote
+        start_pos = pos
+        
+        ! Find closing quote (simple - no escape handling for now)
+        do while (pos <= len_str .and. json_str(pos:pos) /= '"')
+            pos = pos + 1
         end do
         
-        str(pos:pos) = ']'
+        if (pos <= len_str) then
+            key = json_str(start_pos:pos-1)
+            pos = pos + 1  ! Skip closing quote
+        end if
+    end function parse_key_string
+
+    !> Parse a quoted string value
+    function parse_string_value(json_str, pos, len_str) result(value)
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        character(len=MAX_VALUE_LEN) :: value
+        integer :: start_pos
+        
+        value = ''
+        
+        ! Must start with quote
+        if (pos > len_str .or. json_str(pos:pos) /= '"') return
+        
+        pos = pos + 1  ! Skip opening quote
+        start_pos = pos
+        
+        ! Find closing quote (simple - no escape handling for now)
+        do while (pos <= len_str .and. json_str(pos:pos) /= '"')
+            pos = pos + 1
+        end do
+        
+        if (pos <= len_str) then
+            value = json_str(start_pos:pos-1)
+            pos = pos + 1  ! Skip closing quote
+        end if
+    end function parse_string_value
+    
+    !> Parse an object value (extract as JSON string)
+    function parse_object_value(json_str, pos, len_str) result(value)
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        character(len=MAX_VALUE_LEN) :: value
+        integer :: start_pos, brace_count
+        logical :: in_string
+        
+        value = ''
+        
+        ! Must start with opening brace
+        if (pos > len_str .or. json_str(pos:pos) /= '{') return
+        
+        start_pos = pos
+        brace_count = 1
         pos = pos + 1
-    end subroutine add_real_array_to_json
+        in_string = .false.
+        
+        ! Find matching closing brace
+        do while (pos <= len_str .and. brace_count > 0)
+            if (.not. in_string) then
+                if (json_str(pos:pos) == '{') then
+                    brace_count = brace_count + 1
+                else if (json_str(pos:pos) == '}') then
+                    brace_count = brace_count - 1
+                else if (json_str(pos:pos) == '"') then
+                    in_string = .true.
+                end if
+            else
+                if (json_str(pos:pos) == '"') then
+                    ! Simple - assume no escaped quotes in nested objects
+                    in_string = .false.
+                end if
+            end if
+            pos = pos + 1
+        end do
+        
+        if (brace_count == 0) then
+            value = json_str(start_pos:pos-1)
+        end if
+    end function parse_object_value
+    
+    !> Parse a literal value (number, boolean, null)
+    function parse_literal_value(json_str, pos, len_str) result(value)
+        character(len=*), intent(in) :: json_str
+        integer, intent(inout) :: pos
+        integer, intent(in) :: len_str
+        character(len=MAX_VALUE_LEN) :: value
+        integer :: start_pos
+        
+        value = ''
+        start_pos = pos
+        
+        ! Read until comma, brace, or whitespace
+        do while (pos <= len_str)
+            if (json_str(pos:pos) == ',' .or. json_str(pos:pos) == '}' .or. &
+                json_str(pos:pos) == ' ' .or. json_str(pos:pos) == char(9) .or. &
+                json_str(pos:pos) == char(10) .or. json_str(pos:pos) == char(13)) then
+                exit
+            end if
+            pos = pos + 1
+        end do
+        
+        if (pos > start_pos) then
+            value = json_str(start_pos:pos-1)
+        end if
+    end function parse_literal_value
 
 end module dict_mod

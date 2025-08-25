@@ -42,24 +42,25 @@
 !> ```
 module dict
     use dict_mod, only: dict_type, dict_create, dict_destroy, dict_has_key, dict_to_json, &
-                        dict_set_int32, dict_set_real64, dict_set_string, dict_set_real64_array, &
-                        dict_get_int32, dict_get_real64, dict_get_string
-    use molds, only: int32_mold, real64_mold, string_mold
-    use iso_fortran_env, only: real64, int32
+                        dict_set_int32, dict_set_real64, dict_set_string, dict_set_dict, &
+                        dict_get_int32, dict_get_real64, dict_get_string, dict_get_dict, &
+                        dict_from_json
+    use molds, only: int32_mold, real64_mold, string_mold, dict_mold
+    use iso_fortran_env, only: real64, int32, int64
     implicit none
     
     public :: dict_type
-    public :: create, destroy, has_key, to_json
+    public :: create, destroy, has_key, to_json, from_json
     public :: dict_set, dict_get
     
     ! Generic interfaces for setting values
     interface dict_set
-        module procedure :: set_int32, set_real64, set_string, set_real64_array
+        module procedure :: set_int32, set_real64, set_string, set_dict
     end interface
     
     ! Generic interfaces for getting values using mold pattern
     interface dict_get
-        module procedure :: get_int32_mold, get_real64_mold, get_string_mold
+        module procedure :: get_int32_mold, get_real64_mold, get_string_mold, get_dict_mold
     end interface
 
 contains
@@ -145,6 +146,30 @@ contains
         json_str = dict_to_json(dict)
     end function to_json
     
+    !> Create dictionary from JSON string
+    !>
+    !> Parses a JSON string into a dictionary where all values are stored as strings.
+    !> Nested objects are stored as JSON strings and can be parsed separately.
+    !>
+    !> Parameters:
+    !>     json_str : character(len=*), intent(in)
+    !>         JSON string to parse
+    !>
+    !> Returns:
+    !>     dict_type: Dictionary containing parsed key-value pairs
+    !>
+    !> Example:
+    !> ```fortran
+    !> type(dict_type) :: parsed_dict
+    !> character(len=*), parameter :: json = '{"name":"John","age":"30"}'
+    !> parsed_dict = from_json(json)
+    !> ```
+    function from_json(json_str) result(dict)
+        character(len=*), intent(in) :: json_str
+        type(dict_type) :: dict
+        dict = dict_from_json(json_str)
+    end function from_json
+    
     !> Set integer value in dictionary
     !>
     !> Parameters:
@@ -193,21 +218,21 @@ contains
         call dict_set_string(dict, key, value)
     end subroutine set_string
     
-    !> Set real64 array value in dictionary
+    !> Set dictionary value in dictionary
     !>
     !> Parameters:
     !>     dict : dict_type, intent(inout)
     !>         Dictionary to modify
     !>     key : character(len=*), intent(in)
     !>         Key for the value
-    !>     value : real(real64), intent(in)
-    !>         Array of 64-bit real values to store
-    subroutine set_real64_array(dict, key, value)
+    !>     value : dict_type, intent(in)
+    !>         Nested dictionary to store
+    subroutine set_dict(dict, key, value)
         type(dict_type), intent(inout) :: dict
         character(len=*), intent(in) :: key
-        real(real64), intent(in) :: value(:)
-        call dict_set_real64_array(dict, key, value)
-    end subroutine set_real64_array
+        type(dict_type), intent(in) :: value
+        call dict_set_dict(dict, key, value)
+    end subroutine set_dict
     
     !> Get integer value
     function get_int32(dict, key, found) result(value)
@@ -342,5 +367,40 @@ contains
         
         value = dict_get_string(dict, key, found)
     end function get_string_mold
+    
+    !> Get dictionary value using mold pattern for type resolution
+    !>
+    !> Parameters:
+    !>     dict : dict_type, intent(in)
+    !>         Dictionary to search
+    !>     key : character(len=*), intent(in)
+    !>         Key to retrieve value for
+    !>     mold : integer, intent(in)
+    !>         Mold parameter for type resolution (use dict_mold)
+    !>     found : logical, intent(out), optional
+    !>         Set to True if key found, False otherwise
+    !>
+    !> Returns:
+    !>     dict_type: Nested dictionary associated with key, or empty dict if not found
+    !>
+    !> Example:
+    !> ```fortran
+    !> use molds
+    !> type(dict_type) :: nested
+    !> logical :: found
+    !> nested = dict_get(my_dict, 'config', dict_mold, found)
+    !> ```
+    function get_dict_mold(dict, key, mold, found) result(value)
+        type(dict_type), intent(in) :: dict
+        character(len=*), intent(in) :: key
+        integer(int64), intent(in) :: mold
+        logical, intent(out), optional :: found
+        type(dict_type) :: value
+        
+        ! Use mold to suppress unused parameter warning
+        if (.false.) print *, mold
+        
+        value = dict_get_dict(dict, key, found)
+    end function get_dict_mold
 
 end module dict

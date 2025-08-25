@@ -28,7 +28,7 @@ module molds
     use iso_fortran_env, only: real32, real64, int32, int64
     implicit none
     
-    public :: int32_mold, int64_mold, real32_mold, real64_mold, string_mold
+    public :: int32_mold, int64_mold, real32_mold, real64_mold, string_mold, dict_mold
     
     !> Mold constant for 32-bit integers
     integer(int32), parameter :: int32_mold = 0_int32
@@ -44,5 +44,8 @@ module molds
     
     !> Mold constant for strings
     character(len=1), parameter :: string_mold = 'x'
+    
+    !> Mold constant for dictionaries - use int64 to avoid ambiguity
+    integer(int64), parameter :: dict_mold = 0_int64
 
 end module molds
