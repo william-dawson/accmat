@@ -14,13 +14,13 @@ module fbuf_mod
         end subroutine
     end interface
 
-    public :: fbuf, FBUF_HOST, FBUF_DEVICE
+    public :: fbuf, FBUF_HOST, FBUF_OACC
     public :: fbuf_create_real32_1d, fbuf_create_real64_1d, fbuf_create_int32_1d, fbuf_create_int64_1d
     public :: fbuf_sync_impl, fbuf_hardcopy_impl, fbuf_destroy_impl
     public :: fbuf_get_ptr_real32_1d, fbuf_get_ptr_real64_1d, fbuf_get_ptr_int32_1d, fbuf_get_ptr_int64_1d
 
     integer, parameter :: FBUF_HOST = 1
-    integer, parameter :: FBUF_DEVICE = 2
+    integer, parameter :: FBUF_OACC = 2
 
     ! Data type constants
     integer, parameter :: FBUF_REAL32 = 1
@@ -82,7 +82,7 @@ module fbuf_mod
             buf%data%host_ptr = c_loc(data_array(1))
             buf%data%host_valid = .true.
             buf%data%device_valid = .false.
-        else if (target_location == FBUF_DEVICE) then
+        else if (target_location == FBUF_OACC) then
             !$acc enter data create(data_array(:))
             buf%data%device_ptr = c_loc(data_array(1))
             buf%data%device_valid = .true.
@@ -116,7 +116,7 @@ module fbuf_mod
             buf%data%host_ptr = c_loc(data_array(1))
             buf%data%host_valid = .true.
             buf%data%device_valid = .false.
-        else if (target_location == FBUF_DEVICE) then
+        else if (target_location == FBUF_OACC) then
             !$acc enter data create(data_array(:))
             buf%data%device_ptr = c_loc(data_array(1))
             buf%data%device_valid = .true.
@@ -150,7 +150,7 @@ module fbuf_mod
             buf%data%host_ptr = c_loc(data_array(1))
             buf%data%host_valid = .true.
             buf%data%device_valid = .false.
-        else if (target_location == FBUF_DEVICE) then
+        else if (target_location == FBUF_OACC) then
             !$acc enter data create(data_array(:))
             buf%data%device_ptr = c_loc(data_array(1))
             buf%data%device_valid = .true.
@@ -184,7 +184,7 @@ module fbuf_mod
             buf%data%host_ptr = c_loc(data_array(1))
             buf%data%host_valid = .true.
             buf%data%device_valid = .false.
-        else if (target_location == FBUF_DEVICE) then
+        else if (target_location == FBUF_OACC) then
             !$acc enter data create(data_array(:))
             buf%data%device_ptr = c_loc(data_array(1))
             buf%data%device_valid = .true.
@@ -244,7 +244,7 @@ module fbuf_mod
                 end if
             end if
             
-        case(FBUF_DEVICE)
+        case(FBUF_OACC)
             if (.not. this%data%device_valid) then
                 if (this%data%host_valid) then
                     ! Copy from HOST to DEVICE
@@ -306,7 +306,7 @@ module fbuf_mod
         end if
         
         ! If target is DEVICE, sync to device
-        if (target_location == FBUF_DEVICE) then
+        if (target_location == FBUF_OACC) then
             ! Note: This requires the actual data pointer for OpenACC
             new_buf%data%device_ptr = new_buf%data%host_ptr
             new_buf%data%device_valid = .true.

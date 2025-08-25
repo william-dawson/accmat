@@ -37,13 +37,13 @@ module fbuf
                         fbuf_sync_impl, fbuf_hardcopy_impl, fbuf_destroy_impl, &
                         fbuf_get_ptr_real32_1d, fbuf_get_ptr_real64_1d, &
                         fbuf_get_ptr_int32_1d, fbuf_get_ptr_int64_1d, &
-                        FBUF_HOST, FBUF_DEVICE
+                        FBUF_HOST, FBUF_OACC
     use molds, only: real32_mold, real64_mold, int32_mold, int64_mold
     use iso_fortran_env, only: real32, real64, int32, int64
     use iso_c_binding, only: c_ptr
     implicit none
     
-    public :: fbuf_type, FBUF_HOST, FBUF_DEVICE
+    public :: fbuf_type, FBUF_HOST, FBUF_OACC
     public :: create, sync, hardcopy, destroy, get_ptr
     
     ! Generic interfaces for different types
@@ -65,7 +65,7 @@ contains
     !>     n : integer, intent(in)
     !>         Number of elements to allocate
     !>     location : integer, intent(in), optional
-    !>         Preferred location (FBUF_HOST or FBUF_DEVICE)
+    !>         Preferred location (FBUF_HOST or FBUF_OACC)
     !>
     !> Returns:
     !>     fbuf_type: Smart pointer to allocated memory
@@ -138,7 +138,7 @@ contains
     !> this : fbuf
     !>     Smart pointer to synchronize from
     !> location : integer
-    !>     Target location (FBUF_HOST or FBUF_DEVICE)
+    !>     Target location (FBUF_HOST or FBUF_OACC)
     !>
     !> Returns
     !> -------
@@ -158,7 +158,7 @@ contains
     !> host_data => get_ptr(host_buf, fbuf_real64)
     !> 
     !> ! Get DEVICE fbuf (copies from HOST to DEVICE)
-    !> device_buf = sync(buf, FBUF_DEVICE)
+    !> device_buf = sync(buf, FBUF_OACC)
     !> 
     !> ! Later sync back to HOST (copies from DEVICE to HOST)
     !> host_buf = sync(device_buf, FBUF_HOST)
@@ -182,7 +182,7 @@ contains
     !> this : fbuf
     !>     Smart pointer to copy from
     !> location : integer, optional
-    !>     Preferred location for the copy (FBUF_HOST or FBUF_DEVICE)
+    !>     Preferred location for the copy (FBUF_HOST or FBUF_OACC)
     !>     Default uses the same location as the source
     !>
     !> Returns
@@ -201,7 +201,7 @@ contains
     !> copy_host = hardcopy(original)
     !> 
     !> ! Create independent copy on DEVICE
-    !> copy_device = hardcopy(original, FBUF_DEVICE)
+    !> copy_device = hardcopy(original, FBUF_OACC)
     !> ```
     function hardcopy(this, location) result(new_buf)
         class(fbuf_type), intent(in) :: this

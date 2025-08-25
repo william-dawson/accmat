@@ -59,7 +59,7 @@ program lin_solve
     write(*,*) ''
     
     ! Initialize problem
-    call setup_problem(matrix, x, b, n, options)
+    call setup_problem(matrix_buf, x_buf, b_buf, n, options)
     
     write(*,*) 'Starting steepest descent iteration...'
     write(*,*) ''
@@ -68,7 +68,11 @@ program lin_solve
     converged = .false.
     
     ! Initial residual: r = b - A*x
-    call compute_residual(matrix, x, b, r, n)
+    call compute_residual(matrix_buf, x_buf, b_buf, r_buf, n)
+    
+    ! Sync r_buf to HOST to access residual data
+    r_buf = sync(r_buf, FBUF_HOST)
+    r => get_ptr(r_buf, real64_mold)
     rsold = dot_product(r, r)
     norm_r = sqrt(rsold)
     
@@ -87,7 +91,17 @@ program lin_solve
         end if
         
         ! Compute A*r (store in p)
-        call matrix_vector_mult(matrix, r, p, n)
+        call matrix_vector_mult(matrix_buf, r_buf, p_buf, n)
+        
+        ! Sync buffers to HOST for vector operations
+        r_buf = sync(r_buf, FBUF_HOST)
+        p_buf = sync(p_buf, FBUF_HOST)
+        x_buf = sync(x_buf, FBUF_HOST)
+        
+        ! Get fresh pointers after sync
+        r => get_ptr(r_buf, real64_mold)
+        p => get_ptr(p_buf, real64_mold) 
+        x => get_ptr(x_buf, real64_mold)
         
         ! Step size: alpha = (r'*r) / (r'*A*r)
         alpha = rsold / dot_product(r, p)
@@ -122,6 +136,10 @@ program lin_solve
     write(*,*) ''
     
     ! Solution statistics
+    ! Sync x_buf to HOST to access final solution
+    x_buf = sync(x_buf, FBUF_HOST)
+    x => get_ptr(x_buf, real64_mold)
+    
     write(*,*) 'Solution statistics:'
     write(*,*) 'min(x) =', minval(x)
     write(*,*) 'max(x) =', maxval(x)
@@ -162,20 +180,31 @@ program lin_solve
 contains
 
     !> Setup the linear system A*x = b
-    subroutine setup_problem(A, x, b, n, opts)
-        real(real64), intent(inout) :: A(:), x(:), b(:)
+    subroutine setup_problem(A_buf, x_buf, b_buf, n, opts)
+        type(fbuf_type), intent(inout) :: A_buf, x_buf, b_buf
         integer, intent(in) :: n
         type(dict_type), intent(in) :: opts
         integer :: i, j, idx
         real(real64) :: off_diag
         logical :: verb_found
         integer :: verb_level
+        real(real64), pointer :: A(:), x(:), b(:)
         
         verb_level = dict_get(opts, 'verbosity', int32_mold, verb_found)
         
         if (verb_level >= 2) then
             write(*,*) 'Setting up symmetric diagonally dominant matrix...'
         end if
+        
+        ! Sync to HOST to access data
+        A_buf = sync(A_buf, FBUF_HOST)
+        x_buf = sync(x_buf, FBUF_HOST)  
+        b_buf = sync(b_buf, FBUF_HOST)
+        
+        ! Get pointers to synced data
+        A => get_ptr(A_buf, real64_mold)
+        x => get_ptr(x_buf, real64_mold)
+        b => get_ptr(b_buf, real64_mold)
         
         ! Initialize
         A = 0.0_real64
@@ -209,24 +238,46 @@ contains
     end subroutine setup_problem
     
     !> Compute residual r = b - A*x
-    subroutine compute_residual(A, x, b, r, n)
-        real(real64), intent(in) :: A(:), x(:), b(:)
-        real(real64), intent(out) :: r(:)
+    subroutine compute_residual(A_buf, x_buf, b_buf, r_buf, n)
+        type(fbuf_type), intent(inout) :: A_buf, x_buf, b_buf, r_buf
         integer, intent(in) :: n
+        real(real64), pointer :: A(:), x(:), b(:), r(:)
         
-        ! First compute A*x
-        call matrix_vector_mult(A, x, r, n)
+        ! Sync all buffers to HOST for computation
+        A_buf = sync(A_buf, FBUF_HOST)
+        x_buf = sync(x_buf, FBUF_HOST)
+        b_buf = sync(b_buf, FBUF_HOST)
+        r_buf = sync(r_buf, FBUF_HOST)
+        
+        ! Get pointers to synced data
+        A => get_ptr(A_buf, real64_mold)
+        x => get_ptr(x_buf, real64_mold)
+        b => get_ptr(b_buf, real64_mold)
+        r => get_ptr(r_buf, real64_mold)
+        
+        ! First compute A*x (store in r temporarily)
+        call matrix_vector_mult(A_buf, x_buf, r_buf, n)
         
         ! Then r = b - A*x
         r = b - r
     end subroutine compute_residual
     
     !> Matrix-vector multiplication: result = A * vec
-    subroutine matrix_vector_mult(A, vec, result, n)
-        real(real64), intent(in) :: A(:), vec(:)
-        real(real64), intent(out) :: result(:)
+    subroutine matrix_vector_mult(A_buf, vec_buf, result_buf, n)
+        type(fbuf_type), intent(inout) :: A_buf, vec_buf, result_buf
         integer, intent(in) :: n
         integer :: i, j, idx
+        real(real64), pointer :: A(:), vec(:), result(:)
+        
+        ! Sync all buffers to HOST for computation
+        A_buf = sync(A_buf, FBUF_HOST)
+        vec_buf = sync(vec_buf, FBUF_HOST)
+        result_buf = sync(result_buf, FBUF_HOST)
+        
+        ! Get pointers to synced data
+        A => get_ptr(A_buf, real64_mold)
+        vec => get_ptr(vec_buf, real64_mold)
+        result => get_ptr(result_buf, real64_mold)
         
         do i = 1, n
             result(i) = 0.0_real64

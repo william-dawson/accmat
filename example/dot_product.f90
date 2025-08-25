@@ -79,8 +79,8 @@ contains
         integer :: i, n_elements
         
         ! Sync to DEVICE for GPU computation
-        device_a = sync(a, FBUF_DEVICE)
-        device_b = sync(b, FBUF_DEVICE)
+        device_a = sync(a, FBUF_OACC)
+        device_b = sync(b, FBUF_OACC)
         
         ! Get array size
         n_elements = device_a%get_size()
