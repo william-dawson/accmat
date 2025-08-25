@@ -8,31 +8,20 @@ program lin_solve
     integer, parameter :: n = 50  ! Problem size
     integer, parameter :: max_history = 1000  ! Maximum residual history
     type(fbuf_type) :: matrix_buf, x_buf, b_buf, r_buf, p_buf
-    type(dict_type) :: options
+    type(dict_type) :: kwargs
     real(real64), pointer :: x(:)
-    integer(int32) :: max_iter, iter, verbosity
-    real(real64) :: tolerance, norm_r
     real(real64) :: residual_history(max_history)
-    logical :: converged
     
-    write(*,*) 'Linear System Solver'
-    write(*,*) ''
-    
-    ! Configuration
-    max_iter = 1000
-    tolerance = 1.0e-6_real64
-    verbosity = 1
-    
-    ! Store parameters in dictionary
-    options = dict_create()
-    call dict_set(options, 'problem_size', n)
-    call dict_set(options, 'max_iterations', max_iter)
-    call dict_set(options, 'tolerance', tolerance)
-    call dict_set(options, 'verbosity', verbosity)
-    call dict_set(options, 'algorithm', 'steepest_descent')
+    ! Store parameters in kwargs dictionary
+    kwargs = dict_create()
+    call dict_set(kwargs, 'problem_size', n)
+    call dict_set(kwargs, 'max_iterations', 1000)
+    call dict_set(kwargs, 'tolerance', 1e-6_real64)
+    call dict_set(kwargs, 'verbosity', 1)
+    call dict_set(kwargs, 'algorithm', 'steepest_descent')
     
     write(*,*) 'Configuration:'
-    call print_json(options)
+    call print_json(kwargs)
     write(*,*) ''
     
     ! Allocate memory using fbuf on device (OpenACC)
@@ -49,14 +38,14 @@ program lin_solve
     write(*,*) ''
     
     ! Initialize problem
-    call setup_problem(matrix_buf, x_buf, b_buf, n, options)
+    call setup_problem(matrix_buf, x_buf, b_buf, kwargs)
     
     write(*,*) 'Starting steepest descent iteration...'
     write(*,*) ''
     
     ! Run the steepest descent solver
     call steepest_descent_solver(matrix_buf, x_buf, b_buf, r_buf, p_buf, &
-                                 n, options, residual_history, converged, iter, norm_r)
+                                 kwargs, residual_history)
     
     ! Solution statistics
     ! Sync x_buf to HOST to access final solution for printing
@@ -69,20 +58,8 @@ program lin_solve
     write(*,*) 'mean(x) =', sum(x) / size(x)
     write(*,*) ''
     
-    ! Store results in dictionary
-    if (converged) then
-        call dict_set(options, 'converged', 'true')
-    else
-        call dict_set(options, 'converged', 'false')
-    end if
-    call dict_set(options, 'final_iterations', iter)
-    call dict_set(options, 'final_residual', norm_r)
-    
-    ! Store residual history using new array utilities
-    call dict_set(options, 'residual_history', residual_history(1:iter+1))
-    
     write(*,*) 'Final results:'
-    call print_json(options)
+    call print_json(kwargs)
     write(*,*) ''
     
     ! Clean up
@@ -91,7 +68,7 @@ program lin_solve
     call destroy(b_buf)
     call destroy(r_buf)
     call destroy(p_buf)
-    call dict_destroy(options)
+    call dict_destroy(kwargs)
     
     write(*,*) 'Memory cleaned up - solver complete'
 
@@ -99,23 +76,20 @@ contains
 
     !> Steepest descent solver for linear system A*x = b
     subroutine steepest_descent_solver(matrix_buf, x_buf, b_buf, r_buf, p_buf, &
-                                       n, options, residual_history, converged, final_iter, final_norm)
+                                       kwargs, residual_history)
         type(fbuf_type), intent(inout) :: matrix_buf, x_buf, b_buf, r_buf, p_buf
-        integer, intent(in) :: n
-        type(dict_type), intent(in) :: options
+        type(dict_type), intent(inout) :: kwargs
         real(real64), intent(inout) :: residual_history(:)
-        logical, intent(out) :: converged
-        integer, intent(out) :: final_iter
-        real(real64), intent(out) :: final_norm
         
-        integer(int32) :: max_iter, iter, verbosity
+        integer(int32) :: max_iter, iter, verbosity, n
         real(real64) :: tolerance, alpha, rsold, rsnew, norm_r
-        logical :: found
+        logical :: found, converged
         
-        ! Get parameters from options
-        max_iter = dict_get(options, 'max_iterations', int32_mold, found)
-        tolerance = dict_get(options, 'tolerance', real64_mold, found)
-        verbosity = dict_get(options, 'verbosity', int32_mold, found)
+        ! Get parameters from kwargs
+        n = dict_get(kwargs, 'problem_size', int32_mold, found)
+        max_iter = dict_get(kwargs, 'max_iterations', int32_mold, found)
+        tolerance = dict_get(kwargs, 'tolerance', real64_mold, found)
+        verbosity = dict_get(kwargs, 'verbosity', int32_mold, found)
         
         ! Steepest descent algorithm
         converged = .false.
@@ -170,29 +144,32 @@ contains
         write(*,*) ''
         if (converged) then
             write(*,*) 'Converged in', iter, 'iterations'
-            final_iter = iter
+            call dict_set(kwargs, 'converged', 'true')
+            call dict_set(kwargs, 'final_iterations', iter)
         else
             write(*,*) 'Did not converge in', max_iter, 'iterations'
-            final_iter = max_iter
+            call dict_set(kwargs, 'converged', 'false')
+            call dict_set(kwargs, 'final_iterations', max_iter)
         end if
         write(*,*) 'Final residual norm =', norm_r
         write(*,*) ''
         
-        final_norm = norm_r
+        ! Store results in kwargs
+        call dict_set(kwargs, 'residual_history', residual_history(1:iter+1))
     end subroutine steepest_descent_solver
 
     !> Setup the linear system A*x = b
-    subroutine setup_problem(A_buf, x_buf, b_buf, n, opts)
+    subroutine setup_problem(A_buf, x_buf, b_buf, kwargs)
         type(fbuf_type), intent(inout) :: A_buf, x_buf, b_buf
-        integer, intent(in) :: n
-        type(dict_type), intent(in) :: opts
-        integer :: i, j, idx
+        type(dict_type), intent(in) :: kwargs
+        integer :: i, j, idx, n
         real(real64) :: off_diag
         logical :: verb_found
         integer :: verb_level
         real(real64), pointer :: A(:), x(:), b(:)
         
-        verb_level = dict_get(opts, 'verbosity', int32_mold, verb_found)
+        n = dict_get(kwargs, 'problem_size', int32_mold, verb_found)
+        verb_level = dict_get(kwargs, 'verbosity', int32_mold, verb_found)
         
         if (verb_level >= 2) then
             write(*,*) 'Setting up symmetric diagonally dominant matrix...'

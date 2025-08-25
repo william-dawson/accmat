@@ -514,7 +514,12 @@ contains
                 write(*,'(a)',advance='no') ch
             case ('{', '[')
                 if (.not. in_string) then
-                    write(*,'(a)') ch
+                    if (indent_level == 0) then
+                        ! First opening brace needs space for carriage control
+                        write(*,'(a,a)') ' ', ch
+                    else
+                        write(*,'(a)') ch
+                    end if
                     indent_level = indent_level + 1
                     call print_indent(indent_level)
                 else
@@ -560,7 +565,9 @@ contains
     subroutine print_indent(level)
         integer, intent(in) :: level
         integer :: i
-        do i = 1, level * 2  ! 2 spaces per indent level
+        ! Account for Fortran's carriage control - start with one space
+        write(*,'(a)',advance='no') ' '
+        do i = 1, level * 2  ! 2 spaces per indent level after the initial space
             write(*,'(a)',advance='no') ' '
         end do
     end subroutine print_indent
