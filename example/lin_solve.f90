@@ -9,8 +9,8 @@ program lin_solve
     integer, parameter :: max_history = 1000  ! Maximum residual history
     type(fbuf_type) :: matrix_buf, x_buf, b_buf, r_buf, p_buf
     type(dict_type) :: options
-    real(real64), pointer :: matrix(:), x(:), b(:), r(:), p(:)
-    integer(int32) :: max_iter, iter, verbosity, i
+    real(real64), pointer :: x(:)
+    integer(int32) :: max_iter, iter, verbosity
     real(real64) :: tolerance, alpha, rsold, rsnew, norm_r
     real(real64) :: residual_history(max_history)
     logical :: found, converged
@@ -48,12 +48,7 @@ program lin_solve
     r_buf = create(real64_mold, n, FBUF_OACC)          ! Residual vector
     p_buf = create(real64_mold, n, FBUF_OACC)          ! Work vector
     
-    ! Get pointers to data
-    matrix => get_ptr(matrix_buf, real64_mold)
-    x => get_ptr(x_buf, real64_mold)
-    b => get_ptr(b_buf, real64_mold)
-    r => get_ptr(r_buf, real64_mold)
-    p => get_ptr(p_buf, real64_mold)
+    ! No need to get pointers here - subroutines will handle this
     
     write(*,*) 'Allocated:', n*n, 'matrix elements and', n, 'vector elements each'
     write(*,*) ''
@@ -70,17 +65,9 @@ program lin_solve
     ! Initial residual: r = b - A*x
     call compute_residual(matrix_buf, x_buf, b_buf, r_buf, n)
     
-    ! Get device pointer for initial residual computation
-    r => get_ptr(r_buf, real64_mold)
-    
-    ! Compute initial residual norm using OpenACC
-    rsold = 0.0_real64
-    !$acc parallel loop reduction(+:rsold) present(r)
-    do i = 1, n
-        rsold = rsold + r(i) * r(i)
-    end do
-    !$acc end parallel loop
-    norm_r = sqrt(rsold)
+    ! Compute initial residual norm
+    norm_r = compute_norm(r_buf, n)
+    rsold = norm_r * norm_r
     
     ! Store initial residual
     residual_history(1) = norm_r
@@ -99,36 +86,18 @@ program lin_solve
         ! Compute A*r (store in p)
         call matrix_vector_mult(matrix_buf, r_buf, p_buf, n)
         
-        ! Get fresh pointers for device computation
-        r => get_ptr(r_buf, real64_mold)
-        p => get_ptr(p_buf, real64_mold) 
-        x => get_ptr(x_buf, real64_mold)
+        ! Step size: alpha = (r'*r) / (r'*A*r)
+        alpha = rsold / compute_dot_product(r_buf, p_buf, n)
         
-        ! Step size: alpha = (r'*r) / (r'*A*r) using OpenACC reduction
-        alpha = 0.0_real64
-        !$acc parallel loop reduction(+:alpha) present(r, p)
-        do i = 1, n
-            alpha = alpha + r(i) * p(i)
-        end do
-        !$acc end parallel loop
-        alpha = rsold / alpha
+        ! Update solution: x = x + alpha * r
+        call vector_axpy(x_buf, r_buf, alpha, n)
         
-        ! Update solution and residual using OpenACC
-        !$acc parallel loop present(x, r, p)
-        do i = 1, n
-            x(i) = x(i) + alpha * r(i)      ! Update solution: x = x + alpha * r
-            r(i) = r(i) - alpha * p(i)      ! Update residual: r = r - alpha * A*r
-        end do
-        !$acc end parallel loop
+        ! Update residual: r = r - alpha * A*r (p)
+        call vector_axpy(r_buf, p_buf, -alpha, n)
         
-        ! New residual norm using OpenACC reduction
-        rsnew = 0.0_real64
-        !$acc parallel loop reduction(+:rsnew) present(r)
-        do i = 1, n
-            rsnew = rsnew + r(i) * r(i)
-        end do
-        !$acc end parallel loop
-        norm_r = sqrt(rsnew)
+        ! New residual norm
+        norm_r = compute_norm(r_buf, n)
+        rsnew = norm_r * norm_r
         
         ! Store residual in history
         residual_history(iter + 1) = norm_r
@@ -307,5 +276,63 @@ contains
         end do
         !$acc end parallel loop
     end subroutine matrix_vector_mult
+
+    !> Compute the 2-norm of a vector: ||v||_2
+    function compute_norm(v_buf, n) result(norm)
+        type(fbuf_type), intent(inout) :: v_buf
+        integer, intent(in) :: n
+        real(real64) :: norm
+        real(real64), pointer :: v(:)
+        real(real64) :: sum_sq
+        integer :: i
+        
+        v => get_ptr(v_buf, real64_mold)
+        
+        sum_sq = 0.0_real64
+        !$acc parallel loop reduction(+:sum_sq) present(v)
+        do i = 1, n
+            sum_sq = sum_sq + v(i) * v(i)
+        end do
+        !$acc end parallel loop
+        
+        norm = sqrt(sum_sq)
+    end function compute_norm
+
+    !> Compute dot product of two vectors: u^T * v
+    function compute_dot_product(u_buf, v_buf, n) result(dot_prod)
+        type(fbuf_type), intent(inout) :: u_buf, v_buf
+        integer, intent(in) :: n
+        real(real64) :: dot_prod
+        real(real64), pointer :: u(:), v(:)
+        integer :: i
+        
+        u => get_ptr(u_buf, real64_mold)
+        v => get_ptr(v_buf, real64_mold)
+        
+        dot_prod = 0.0_real64
+        !$acc parallel loop reduction(+:dot_prod) present(u, v)
+        do i = 1, n
+            dot_prod = dot_prod + u(i) * v(i)
+        end do
+        !$acc end parallel loop
+    end function compute_dot_product
+
+    !> Vector AXPY operation: y = y + alpha * x
+    subroutine vector_axpy(y_buf, x_buf, alpha, n)
+        type(fbuf_type), intent(inout) :: y_buf, x_buf
+        real(real64), intent(in) :: alpha
+        integer, intent(in) :: n
+        real(real64), pointer :: x(:), y(:)
+        integer :: i
+        
+        x => get_ptr(x_buf, real64_mold)
+        y => get_ptr(y_buf, real64_mold)
+        
+        !$acc parallel loop present(x, y)
+        do i = 1, n
+            y(i) = y(i) + alpha * x(i)
+        end do
+        !$acc end parallel loop
+    end subroutine vector_axpy
 
 end program lin_solve
