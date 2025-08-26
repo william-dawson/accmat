@@ -17,6 +17,7 @@ module fbuf_mod
     public :: fbuf, FBUF_HOST, FBUF_OACC
     public :: fbuf_create_real32_1d, fbuf_create_real64_1d, fbuf_create_int32_1d, fbuf_create_int64_1d
     public :: fbuf_sync_impl, fbuf_hardcopy_impl, fbuf_destroy_impl
+    public :: fbuf_async_start_impl
     public :: fbuf_get_ptr_real32_1d, fbuf_get_ptr_real64_1d, fbuf_get_ptr_int32_1d, fbuf_get_ptr_int64_1d
 
     integer, parameter :: FBUF_HOST = 1
@@ -38,6 +39,8 @@ module fbuf_mod
         integer :: ref_count = 0
         logical :: host_valid = .false.
         logical :: device_valid = .false.
+        integer :: async_queue_id = -1
+        logical :: async_pending = .false.
     end type
 
     type :: fbuf
@@ -49,6 +52,7 @@ module fbuf_mod
             procedure :: sync => fbuf_sync_impl
             procedure :: destroy => fbuf_destroy_impl
             procedure :: hardcopy => fbuf_hardcopy_impl
+            procedure :: async_start => fbuf_async_start_impl
             ! Note: get_ptr is handled through module-level generic interface
             final :: fbuf_finalize
     end type
@@ -219,7 +223,10 @@ module fbuf_mod
         class(fbuf), intent(in) :: this
         integer, intent(in) :: location
         type(fbuf) :: new_buf
-        real(real64), pointer :: data(:)
+        real(real32), pointer :: data_r32(:)
+        real(real64), pointer :: data_r64(:)
+        integer(int32), pointer :: data_i32(:)
+        integer(int64), pointer :: data_i64(:)
         integer :: total_bytes
         
         if (.not. associated(this%data)) then
@@ -231,14 +238,45 @@ module fbuf_mod
         new_buf%data%ref_count = new_buf%data%ref_count + 1
         new_buf%preferred_location = location
         
-        ! Ensure data is available at requested location
+        ! First, check if there's a pending async transfer
+        if (this%data%async_pending) then
+            ! Wait for the async transfer to complete
+            if (this%data%async_queue_id >= 0) then
+                !$acc wait(this%data%async_queue_id)
+                
+                ! Update validity flags based on the async transfer direction
+                if (this%preferred_location == FBUF_HOST) then
+                    this%data%host_valid = .true.
+                else if (this%preferred_location == FBUF_OACC) then
+                    this%data%device_valid = .true.
+                end if
+                
+                ! Clear async state
+                this%data%async_pending = .false.
+                this%data%async_queue_id = -1
+            end if
+        end if
+        
+        ! Now ensure data is available at requested location
         select case(location)
         case(FBUF_HOST)
             if (.not. this%data%host_valid) then
                 if (this%data%device_valid) then
-                    ! Copy from DEVICE to HOST
-                    call c_f_pointer(this%data%device_ptr, data, [this%data%total_elements])
-                    !$acc update host(data(:))
+                    ! Synchronous copy from DEVICE to HOST
+                    select case(this%data%data_type)
+                    case(FBUF_REAL32)
+                        call c_f_pointer(this%data%device_ptr, data_r32, [this%data%total_elements])
+                        !$acc update host(data_r32(:))
+                    case(FBUF_REAL64)
+                        call c_f_pointer(this%data%device_ptr, data_r64, [this%data%total_elements])
+                        !$acc update host(data_r64(:))
+                    case(FBUF_INT32)
+                        call c_f_pointer(this%data%device_ptr, data_i32, [this%data%total_elements])
+                        !$acc update host(data_i32(:))
+                    case(FBUF_INT64)
+                        call c_f_pointer(this%data%device_ptr, data_i64, [this%data%total_elements])
+                        !$acc update host(data_i64(:))
+                    end select
                     this%data%host_ptr = this%data%device_ptr
                     this%data%host_valid = .true.
                 end if
@@ -247,9 +285,21 @@ module fbuf_mod
         case(FBUF_OACC)
             if (.not. this%data%device_valid) then
                 if (this%data%host_valid) then
-                    ! Copy from HOST to DEVICE
-                    call c_f_pointer(this%data%host_ptr, data, [this%data%total_elements])
-                    !$acc update device(data(:))
+                    ! Synchronous copy from HOST to DEVICE
+                    select case(this%data%data_type)
+                    case(FBUF_REAL32)
+                        call c_f_pointer(this%data%host_ptr, data_r32, [this%data%total_elements])
+                        !$acc update device(data_r32(:))
+                    case(FBUF_REAL64)
+                        call c_f_pointer(this%data%host_ptr, data_r64, [this%data%total_elements])
+                        !$acc update device(data_r64(:))
+                    case(FBUF_INT32)
+                        call c_f_pointer(this%data%host_ptr, data_i32, [this%data%total_elements])
+                        !$acc update device(data_i32(:))
+                    case(FBUF_INT64)
+                        call c_f_pointer(this%data%host_ptr, data_i64, [this%data%total_elements])
+                        !$acc update device(data_i64(:))
+                    end select
                     this%data%device_ptr = this%data%host_ptr
                     this%data%device_valid = .true.
                 else if (.not. c_associated(this%data%device_ptr)) then
@@ -261,6 +311,78 @@ module fbuf_mod
             end if
         end select
     end function fbuf_sync_impl
+
+    function fbuf_async_start_impl(this, location, queue_id) result(new_buf)
+        class(fbuf), intent(in) :: this
+        integer, intent(in) :: location
+        integer, intent(in), optional :: queue_id
+        type(fbuf) :: new_buf
+        real(real32), pointer :: data_r32(:)
+        real(real64), pointer :: data_r64(:)
+        integer(int32), pointer :: data_i32(:)
+        integer(int64), pointer :: data_i64(:)
+        integer :: async_queue
+        
+        if (.not. associated(this%data)) then
+            return
+        end if
+        
+        ! Use provided queue ID or default to 1
+        async_queue = 1
+        if (present(queue_id)) async_queue = queue_id
+        
+        ! Create new fbuf sharing the same data structure but increment ref count
+        new_buf%data => this%data
+        new_buf%data%ref_count = new_buf%data%ref_count + 1
+        new_buf%preferred_location = location
+        new_buf%data%async_queue_id = async_queue
+        
+        ! Start asynchronous data transfer based on data type and location
+        select case(location)
+        case(FBUF_HOST)
+            if (.not. this%data%host_valid .and. this%data%device_valid) then
+                ! Async copy from DEVICE to HOST
+                select case(this%data%data_type)
+                case(FBUF_REAL32)
+                    call c_f_pointer(this%data%device_ptr, data_r32, [this%data%total_elements])
+                    !$acc update host(data_r32(:)) async(async_queue)
+                case(FBUF_REAL64)
+                    call c_f_pointer(this%data%device_ptr, data_r64, [this%data%total_elements])
+                    !$acc update host(data_r64(:)) async(async_queue)
+                case(FBUF_INT32)
+                    call c_f_pointer(this%data%device_ptr, data_i32, [this%data%total_elements])
+                    !$acc update host(data_i32(:)) async(async_queue)
+                case(FBUF_INT64)
+                    call c_f_pointer(this%data%device_ptr, data_i64, [this%data%total_elements])
+                    !$acc update host(data_i64(:)) async(async_queue)
+                end select
+                this%data%host_ptr = this%data%device_ptr
+                this%data%async_pending = .true.
+            end if
+            
+        case(FBUF_OACC)
+            if (.not. this%data%device_valid .and. this%data%host_valid) then
+                ! Async copy from HOST to DEVICE
+                select case(this%data%data_type)
+                case(FBUF_REAL32)
+                    call c_f_pointer(this%data%host_ptr, data_r32, [this%data%total_elements])
+                    !$acc update device(data_r32(:)) async(async_queue)
+                case(FBUF_REAL64)
+                    call c_f_pointer(this%data%host_ptr, data_r64, [this%data%total_elements])
+                    !$acc update device(data_r64(:)) async(async_queue)
+                case(FBUF_INT32)
+                    call c_f_pointer(this%data%host_ptr, data_i32, [this%data%total_elements])
+                    !$acc update device(data_i32(:)) async(async_queue)
+                case(FBUF_INT64)
+                    call c_f_pointer(this%data%host_ptr, data_i64, [this%data%total_elements])
+                    !$acc update device(data_i64(:)) async(async_queue)
+                end select
+                this%data%device_ptr = this%data%host_ptr
+                this%data%async_pending = .true.
+            end if
+        end select
+    end function fbuf_async_start_impl
+
 
     function fbuf_hardcopy_impl(this, location) result(new_buf)
         class(fbuf), intent(in) :: this

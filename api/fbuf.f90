@@ -35,6 +35,7 @@ module fbuf
                         fbuf_create_real32_1d, fbuf_create_real64_1d, &
                         fbuf_create_int32_1d, fbuf_create_int64_1d, &
                         fbuf_sync_impl, fbuf_hardcopy_impl, fbuf_destroy_impl, &
+                        fbuf_async_start_impl, &
                         fbuf_get_ptr_real32_1d, fbuf_get_ptr_real64_1d, &
                         fbuf_get_ptr_int32_1d, fbuf_get_ptr_int64_1d, &
                         FBUF_HOST, FBUF_OACC
@@ -44,7 +45,7 @@ module fbuf
     implicit none
     
     public :: fbuf_type, FBUF_HOST, FBUF_OACC
-    public :: create, sync, hardcopy, destroy, get_ptr
+    public :: create, sync, hardcopy, destroy, get_ptr, async_start
     
     ! Generic interfaces for different types
     interface create
@@ -237,6 +238,53 @@ contains
         class(fbuf_type), intent(inout) :: this
         call fbuf_destroy_impl(this)
     end subroutine destroy
+
+    !> Start asynchronous data transfer to a specific location
+    !>
+    !> Initiates asynchronous data transfer using OpenACC async queues.
+    !> Returns immediately without waiting for transfer completion.
+    !> Use sync() to wait for completion - sync() automatically detects
+    !> and waits for pending async transfers.
+    !>
+    !> Parameters
+    !> ----------
+    !> this : fbuf_type
+    !>     Smart pointer to transfer data from
+    !> location : integer
+    !>     Target location (FBUF_HOST or FBUF_OACC)
+    !> queue_id : integer, optional
+    !>     OpenACC async queue ID (default: 1)
+    !>
+    !> Returns
+    !> -------
+    !> type(fbuf_type)
+    !>     New smart pointer with async transfer initiated
+    !>
+    !> Examples
+    !> --------
+    !> ```fortran
+    !> type(fbuf_type) :: buf, device_buf
+    !> 
+    !> buf = create(real64_mold, 1000, FBUF_HOST)
+    !> 
+    !> ! Start async transfer to device (non-blocking)
+    !> device_buf = async_start(buf, FBUF_OACC)
+    !> 
+    !> ! Do other work while transfer happens...
+    !> call do_other_work()
+    !> 
+    !> ! sync() automatically waits for async transfer to complete
+    !> device_buf = sync(device_buf, FBUF_OACC)  ! Blocks until async completes
+    !> ```
+    function async_start(this, location, queue_id) result(new_buf)
+        class(fbuf_type), intent(in) :: this
+        integer, intent(in) :: location
+        integer, intent(in), optional :: queue_id
+        type(fbuf_type) :: new_buf
+        
+        new_buf = fbuf_async_start_impl(this, location, queue_id)
+    end function async_start
+
 
     !> Get a typed Fortran pointer to the data (real32)
     !>
