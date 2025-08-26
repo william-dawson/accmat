@@ -10,7 +10,7 @@ This project should define an opinionated programming style for Fortran that wil
 ! ❌ Old style - unsafe, location unknown
 subroutine compute(x)
     real, pointer :: x(:)
-    ! Where is x? HOST? GPU? Nobody knows!
+    ! Where is x? is this safe?
     x(1) = x(1) + 1.0
 end subroutine
 
@@ -111,5 +111,3 @@ call analyze_on_cpu(analysis_buf, analysis_results)
 ! Clean up - GPU memory automatically freed
 call destroy(analysis_buf)
 ```
-
-{!README.md!}
